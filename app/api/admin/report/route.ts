@@ -75,21 +75,25 @@ export async function GET(request: Request) {
   sessions.sort((a, b) => new Date(b.in).getTime() - new Date(a.in).getTime());
 
   // Totals per employee (completed sessions only).
-  const totals = new Map<number, { name: string; minutes: number }>();
+  const totals = new Map<number, { name: string; minutes: number; sessions: number }>();
   for (const s of sessions) {
     if (s.minutes == null) continue;
-    const t = totals.get(s.employeeId) || { name: s.name, minutes: 0 };
+    const t = totals.get(s.employeeId) || { name: s.name, minutes: 0, sessions: 0 };
     t.minutes += s.minutes;
+    t.sessions += 1;
     totals.set(s.employeeId, t);
   }
 
   return NextResponse.json({
     days,
     sessions,
-    totals: Array.from(totals.entries()).map(([employeeId, t]) => ({
-      employeeId,
-      name: t.name,
-      minutes: t.minutes,
-    })),
+    totals: Array.from(totals.entries())
+      .map(([employeeId, t]) => ({
+        employeeId,
+        name: t.name,
+        minutes: t.minutes,
+        sessions: t.sessions,
+      }))
+      .sort((a, b) => b.minutes - a.minutes),
   });
 }

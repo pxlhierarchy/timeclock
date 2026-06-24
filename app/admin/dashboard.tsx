@@ -12,7 +12,43 @@ type Session = {
   minutes: number | null;
 };
 
-type Total = { employeeId: number; name: string; minutes: number };
+type Total = { employeeId: number; name: string; minutes: number; sessions: number };
+
+const TZ_KEY = "timeclock.tz";
+
+// Full IANA list when the browser supports it, else a sensible curated fallback.
+function timeZoneList(): string[] {
+  const sv = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+    .supportedValuesOf;
+  if (typeof sv === "function") {
+    try {
+      return sv("timeZone");
+    } catch {
+      /* fall through */
+    }
+  }
+  return [
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Anchorage",
+    "Pacific/Honolulu",
+    "UTC",
+    "Europe/London",
+    "Europe/Paris",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+}
+
+function browserTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
 
 function fmtHours(minutes: number) {
   const h = Math.floor(minutes / 60);
@@ -20,12 +56,13 @@ function fmtHours(minutes: number) {
   return `${h}h ${m}m`;
 }
 
-function fmtDateTime(iso: string) {
+function fmtDateTime(iso: string, tz: string) {
   return new Date(iso).toLocaleString([], {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: tz || undefined,
   });
 }
 
@@ -39,6 +76,20 @@ export default function Dashboard() {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const [tz, setTz] = useState("");
+
+  // Load the saved timezone (or fall back to the browser's) once on mount.
+  useEffect(() => {
+    const saved =
+      typeof window !== "undefined" ? localStorage.getItem(TZ_KEY) : null;
+    setTz(saved || browserTz());
+  }, []);
+
+  function changeTz(next: string) {
+    setTz(next);
+    if (typeof window !== "undefined") localStorage.setItem(TZ_KEY, next);
+  }
 
   const loadEmployees = useCallback(async () => {
     const res = await fetch("/api/admin/employees", { cache: "no-store" });
@@ -177,6 +228,25 @@ export default function Dashboard() {
       </section>
 
       <section className="panel">
+        <h2>Settings</h2>
+        <div className="field" style={{ maxWidth: 360 }}>
+          <label>Time zone (applies to the timesheet below)</label>
+          <select value={tz} onChange={(e) => changeTz(e.target.value)}>
+            {tz && !timeZoneList().includes(tz) && <option value={tz}>{tz}</option>}
+            {timeZoneList().map((z) => (
+              <option key={z} value={z}>
+                {z}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+          Saved in this browser. Times below are shown in{" "}
+          <span className="mono-num">{tz || "…"}</span>.
+        </p>
+      </section>
+
+      <section className="panel">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 style={{ margin: 0 }}>Timesheet</h2>
           <div className="field">
@@ -201,7 +271,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <h3 style={{ fontSize: 16, marginTop: 20 }}>Total hours</h3>
+        <h3 style={{ marginTop: 20 }}>Total hours by employee</h3>
         {totals.length === 0 ? (
           <p className="muted">No completed sessions in this period.</p>
         ) : (
@@ -209,21 +279,23 @@ export default function Dashboard() {
             <thead>
               <tr>
                 <th>Employee</th>
-                <th>Total</th>
+                <th>Sessions</th>
+                <th>Total hours</th>
               </tr>
             </thead>
             <tbody>
               {totals.map((t) => (
                 <tr key={t.employeeId}>
                   <td>{t.name}</td>
-                  <td>{fmtHours(t.minutes)}</td>
+                  <td>{t.sessions}</td>
+                  <td className="mono-num">{fmtHours(t.minutes)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
 
-        <h3 style={{ fontSize: 16, marginTop: 24 }}>Sessions</h3>
+        <h3 style={{ marginTop: 24 }}>Sessions</h3>
         {sessions.length === 0 ? (
           <p className="muted">No punches in this period.</p>
         ) : (
@@ -240,10 +312,10 @@ export default function Dashboard() {
               {sessions.map((s, i) => (
                 <tr key={i}>
                   <td>{s.name}</td>
-                  <td>{fmtDateTime(s.in)}</td>
+                  <td>{fmtDateTime(s.in, tz)}</td>
                   <td>
                     {s.out ? (
-                      fmtDateTime(s.out)
+                      fmtDateTime(s.out, tz)
                     ) : (
                       <span className="pill open">Still clocked in</span>
                     )}
