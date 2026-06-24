@@ -66,6 +66,43 @@ function fmtDateTime(iso: string, tz: string) {
   });
 }
 
+// How far (ms) the given zone is ahead of UTC at `date`.
+function tzOffsetMs(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const map: Record<string, number> = {};
+  for (const p of dtf.formatToParts(date)) {
+    if (p.type !== "literal") map[p.type] = Number(p.value);
+  }
+  const hour = map.hour === 24 ? 0 : map.hour;
+  const asUTC = Date.UTC(map.year, map.month - 1, map.day, hour, map.minute, map.second);
+  return asUTC - date.getTime();
+}
+
+// Interpret a "YYYY-MM-DDTHH:mm" wall-clock string as a time in `timeZone`
+// and return the corresponding UTC ISO instant. Falls back to browser-local
+// interpretation if no zone is given.
+function zonedWallTimeToISO(localStr: string, timeZone: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(localStr);
+  if (!m) return null;
+  if (!timeZone) {
+    const d = new Date(localStr);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const [, y, mo, d, h, mi] = m.map(Number);
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  const offset = tzOffsetMs(new Date(guess), timeZone);
+  return new Date(guess - offset).toISOString();
+}
+
 export default function Dashboard() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -78,6 +115,14 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
 
   const [tz, setTz] = useState("");
+
+  // Manual time entry (forgot-to-punch correction).
+  const [mEmpId, setMEmpId] = useState("");
+  const [mIn, setMIn] = useState("");
+  const [mOut, setMOut] = useState("");
+  const [mErr, setMErr] = useState("");
+  const [mMsg, setMMsg] = useState("");
+  const [mBusy, setMBusy] = useState(false);
 
   // Load the saved timezone (or fall back to the browser's) once on mount.
   useEffect(() => {
@@ -138,6 +183,36 @@ export default function Dashboard() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function addManualHours(e: React.FormEvent) {
+    e.preventDefault();
+    setMErr("");
+    setMMsg("");
+    if (!mEmpId) return setMErr("Choose an employee.");
+    if (!mIn || !mOut) return setMErr("Enter both a clock-in and clock-out time.");
+    const inISO = zonedWallTimeToISO(mIn, tz);
+    const outISO = zonedWallTimeToISO(mOut, tz);
+    if (!inISO || !outISO) return setMErr("Invalid date/time.");
+    setMBusy(true);
+    try {
+      const res = await fetch("/api/admin/punches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId: Number(mEmpId), inTs: inISO, outTs: outISO }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMErr(data.error || "Could not add hours.");
+      } else {
+        setMMsg(`Added ${fmtHours(data.minutes)} for ${data.employee.name}.`);
+        setMIn("");
+        setMOut("");
+        await loadReport(days);
+      }
+    } finally {
+      setMBusy(false);
     }
   }
 
@@ -224,6 +299,50 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Add manual hours</h2>
+        <p className="muted" style={{ marginTop: -8, marginBottom: 14, fontSize: 12 }}>
+          For someone who forgot to punch. Times are entered in{" "}
+          <span className="mono-num">{tz || "…"}</span> (change it in Settings below).
+        </p>
+        <form className="row" onSubmit={addManualHours}>
+          <div className="field" style={{ minWidth: 160 }}>
+            <label>Employee</label>
+            <select value={mEmpId} onChange={(e) => setMEmpId(e.target.value)}>
+              <option value="">Select…</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Clock in</label>
+            <input
+              type="datetime-local"
+              value={mIn}
+              onChange={(e) => setMIn(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label>Clock out</label>
+            <input
+              type="datetime-local"
+              value={mOut}
+              onChange={(e) => setMOut(e.target.value)}
+            />
+          </div>
+          <button className="btn" type="submit" disabled={mBusy}>
+            {mBusy ? "Adding…" : "Add hours"}
+          </button>
+        </form>
+        <p className="err">{mErr}</p>
+        {mMsg && (
+          <p style={{ color: "var(--green)", fontSize: 13, margin: 0 }}>{mMsg}</p>
         )}
       </section>
 
