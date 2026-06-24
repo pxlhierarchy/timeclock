@@ -7,6 +7,8 @@ type Employee = { id: number; name: string; pin: string; active: boolean };
 type Session = {
   employeeId: number;
   name: string;
+  inId: number;
+  outId: number | null;
   in: string;
   out: string | null;
   minutes: number | null;
@@ -103,6 +105,26 @@ function zonedWallTimeToISO(localStr: string, timeZone: string): string | null {
   return new Date(guess - offset).toISOString();
 }
 
+// UTC ISO instant -> "YYYY-MM-DDTHH:mm" wall-clock string in `timeZone`,
+// suitable for a <input type="datetime-local"> value.
+function isoToZonedInput(iso: string, timeZone: string): string {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: timeZone || undefined,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const m: Record<string, string> = {};
+  for (const p of dtf.formatToParts(new Date(iso))) {
+    if (p.type !== "literal") m[p.type] = p.value;
+  }
+  const hour = m.hour === "24" ? "00" : m.hour;
+  return `${m.year}-${m.month}-${m.day}T${hour}:${m.minute}`;
+}
+
 export default function Dashboard() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -123,6 +145,13 @@ export default function Dashboard() {
   const [mErr, setMErr] = useState("");
   const [mMsg, setMMsg] = useState("");
   const [mBusy, setMBusy] = useState(false);
+
+  // Inline editing of an existing session (keyed by its clock-in punch id).
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editIn, setEditIn] = useState("");
+  const [editOut, setEditOut] = useState("");
+  const [editErr, setEditErr] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
 
   // Load the saved timezone (or fall back to the browser's) once on mount.
   useEffect(() => {
@@ -213,6 +242,56 @@ export default function Dashboard() {
       }
     } finally {
       setMBusy(false);
+    }
+  }
+
+  function startEdit(s: Session) {
+    setEditErr("");
+    setEditId(s.inId);
+    setEditIn(isoToZonedInput(s.in, tz));
+    setEditOut(s.out ? isoToZonedInput(s.out, tz) : "");
+  }
+
+  function cancelEdit() {
+    setEditId(null);
+    setEditErr("");
+  }
+
+  async function saveEdit(s: Session) {
+    setEditErr("");
+    if (!editIn) return setEditErr("Clock-in time is required.");
+    const inISO = zonedWallTimeToISO(editIn, tz);
+    const outISO = editOut ? zonedWallTimeToISO(editOut, tz) : null;
+    if (!inISO || (editOut && !outISO)) return setEditErr("Invalid date/time.");
+    setEditBusy(true);
+    try {
+      const res = await fetch("/api/admin/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inId: s.inId, outId: s.outId, inTs: inISO, outTs: outISO }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditErr(data.error || "Could not save.");
+      } else {
+        setEditId(null);
+        await loadReport(days);
+      }
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function removeSession(s: Session) {
+    if (!confirm(`Remove this ${s.name} entry? This can't be undone.`)) return;
+    const res = await fetch("/api/admin/sessions", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inId: s.inId, outId: s.outId }),
+    });
+    if (res.ok) {
+      if (editId === s.inId) setEditId(null);
+      await loadReport(days);
     }
   }
 
@@ -425,23 +504,90 @@ export default function Dashboard() {
                 <th>Clock in</th>
                 <th>Clock out</th>
                 <th>Duration</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s, i) => (
-                <tr key={i}>
-                  <td>{s.name}</td>
-                  <td>{fmtDateTime(s.in, tz)}</td>
-                  <td>
-                    {s.out ? (
-                      fmtDateTime(s.out, tz)
-                    ) : (
-                      <span className="pill open">Still clocked in</span>
-                    )}
-                  </td>
-                  <td>{s.minutes != null ? fmtHours(s.minutes) : "—"}</td>
-                </tr>
-              ))}
+              {sessions.map((s) =>
+                editId === s.inId ? (
+                  <tr key={s.inId}>
+                    <td>{s.name}</td>
+                    <td>
+                      <input
+                        type="datetime-local"
+                        value={editIn}
+                        onChange={(e) => setEditIn(e.target.value)}
+                        style={{ fontSize: 13, padding: "7px 8px" }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="datetime-local"
+                        value={editOut}
+                        onChange={(e) => setEditOut(e.target.value)}
+                        style={{ fontSize: 13, padding: "7px 8px" }}
+                      />
+                      {!s.out && (
+                        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                          Set a time to close this open session.
+                        </div>
+                      )}
+                    </td>
+                    <td className="muted">—</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button
+                        className="btn"
+                        style={{ padding: "7px 12px", fontSize: 12 }}
+                        onClick={() => saveEdit(s)}
+                        disabled={editBusy}
+                      >
+                        {editBusy ? "Saving…" : "Save"}
+                      </button>{" "}
+                      <button
+                        className="btn ghost"
+                        style={{ padding: "7px 12px", fontSize: 12 }}
+                        onClick={cancelEdit}
+                        disabled={editBusy}
+                      >
+                        Cancel
+                      </button>
+                      {editErr && (
+                        <div className="err" style={{ textAlign: "left", marginTop: 6 }}>
+                          {editErr}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={s.inId}>
+                    <td>{s.name}</td>
+                    <td>{fmtDateTime(s.in, tz)}</td>
+                    <td>
+                      {s.out ? (
+                        fmtDateTime(s.out, tz)
+                      ) : (
+                        <span className="pill open">Still clocked in</span>
+                      )}
+                    </td>
+                    <td>{s.minutes != null ? fmtHours(s.minutes) : "—"}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button
+                        className="btn ghost"
+                        style={{ padding: "7px 12px", fontSize: 12 }}
+                        onClick={() => startEdit(s)}
+                      >
+                        Edit
+                      </button>{" "}
+                      <button
+                        className="btn danger"
+                        onClick={() => removeSession(s)}
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                )
+              )}
             </tbody>
           </table>
         )}

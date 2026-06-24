@@ -5,6 +5,7 @@ import { isAuthed } from "@/app/lib/auth";
 export const dynamic = "force-dynamic";
 
 type Row = {
+  id: number;
   employee_id: number;
   name: string;
   kind: "in" | "out";
@@ -22,17 +23,20 @@ export async function GET(request: Request) {
   const days = Math.min(Math.max(Number(searchParams.get("days")) || 14, 1), 365);
 
   const rows = (await sql`
-    SELECT p.employee_id, e.name, p.kind, p.ts
+    SELECT p.id, p.employee_id, e.name, p.kind, p.ts
     FROM punches p
     JOIN employees e ON e.id = p.employee_id
     WHERE p.ts >= now() - (${days} || ' days')::interval
     ORDER BY p.employee_id ASC, p.ts ASC
   `) as Row[];
 
-  // Pair in -> out into sessions per employee.
+  // Pair in -> out into sessions per employee. inId/outId reference the
+  // underlying punch rows so the admin UI can edit or remove a session.
   type Session = {
     employeeId: number;
     name: string;
+    inId: number;
+    outId: number | null;
     in: string;
     out: string | null;
     minutes: number | null;
@@ -53,6 +57,8 @@ export async function GET(request: Request) {
         sessions.push({
           employeeId: r.employee_id,
           name: r.name,
+          inId: open.id,
+          outId: r.id,
           in: open.ts,
           out: r.ts,
           minutes,
@@ -66,6 +72,8 @@ export async function GET(request: Request) {
     sessions.push({
       employeeId: open.employee_id,
       name: open.name,
+      inId: open.id,
+      outId: null,
       in: open.ts,
       out: null,
       minutes: null,
