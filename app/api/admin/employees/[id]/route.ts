@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/app/lib/db";
-import { isAuthed } from "@/app/lib/auth";
+import { requireAdmin, fail } from "@/app/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -9,16 +9,13 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!(await isAuthed())) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const denied = await requireAdmin();
+  if (denied) return denied;
   await ensureSchema();
 
   const { id } = await params;
   const employeeId = Number(id);
-  if (!employeeId) {
-    return NextResponse.json({ error: "Invalid id." }, { status: 400 });
-  }
+  if (!employeeId) return fail("Invalid id.", 400);
 
   await sql`UPDATE employees SET active = FALSE WHERE id = ${employeeId}`;
   return NextResponse.json({ ok: true });

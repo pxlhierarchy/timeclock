@@ -1,22 +1,28 @@
 # Time Clock — Project Handoff
 
-_Last updated: 2026-06-23_
+_Last updated: 2026-06-24_
 
 An employee time-clock kiosk: staff tap their name and enter a 4-digit PIN to
-punch in/out; an admin area manages employees and views timesheets. Built on
-Next.js 16 (App Router) + React 19, backed by Neon Postgres, deployed on Vercel.
+punch in/out; an admin area manages employees, corrects time, and views
+timesheets. Built on Next.js 16 (App Router) + React 19, backed by Neon
+Postgres, deployed on Vercel.
 
 ---
 
 ## 1. Current status
 
-- **Code:** Complete and committed. Branch `master` is pushed to
-  `github.com/pxlhierarchy/timeclock` (commit `86fe25d "Build employee
-  time-clock kiosk"`). `git fetch` confirms the remote is in sync.
-- **Deployment:** ⚠️ **Not live yet.** Vercel reports "no production
-  deployments." This is a Vercel-side connection/config issue, **not** a missing
-  push — see [§6 Going live](#6-going-live-fixing-no-production-deployments).
-- **Uncommitted:** A minor `.gitignore` edit (working tree only, not yet committed).
+- **Code:** Complete and committed on branch `master`, pushed to
+  `github.com/pxlhierarchy/timeclock`.
+- **Deployment:** ✅ **Live in production on Vercel.**
+  - Custom domain: **https://time.skeetscloset.fit**
+  - Vercel alias: https://timeclock-pied.vercel.app
+  - The Vercel project (`timeclock`, org `pxlhierarchys-projects`) is **linked**
+    locally via the Vercel CLI; `vercel --prod` redeploys.
+- **Database:** Neon Postgres, connected. The **same** Neon database backs both
+  local dev and production (one connection string in both places).
+
+> ⚠️ **`ADMIN_PASSWORD` is still `admin` in production.** Change it before this
+> is trusted with real payroll data — see [§5](#5-environment-variables).
 
 ---
 
@@ -29,8 +35,13 @@ Next.js 16 (App Router) + React 19, backed by Neon Postgres, deployed on Vercel.
 | Database | Neon Postgres via `@neondatabase/serverless` `^1.1.0`        |
 | Auth     | HMAC-signed httpOnly cookie (admin only); employees use PINs |
 | Hosting  | Vercel (Fluid Compute, Node runtime)                         |
+| Tooling  | Vercel CLI (installed + linked), TypeScript (`tsc --noEmit`) |
 
 No ORM — raw parameterized SQL via the Neon tagged-template client.
+
+The look is a **dark terminal / phosphor-green monospace theme**; all visual
+styling lives in `app/globals.css` via CSS custom properties (`--bg`, `--green`,
+`--panel`, `--mono`, …). Restyle by editing those tokens, not the components.
 
 ---
 
@@ -40,26 +51,49 @@ No ORM — raw parameterized SQL via the Neon tagged-template client.
 app/
   layout.tsx              Root layout + metadata
   page.tsx                KIOSK (client) — name grid + PIN pad + confirmation
-  globals.css             All styling
+  globals.css             ALL styling (terminal theme, CSS variables)
   admin/
     page.tsx              Server gate: isAuthed() ? <Dashboard/> : <Login/>
     login.tsx             Client login form
-    dashboard.tsx         Client admin UI — manage employees, view timesheet
+    dashboard.tsx         Client admin UI — employees, manual hours, edit/remove
+                          sessions, timezone setting, timesheet + totals
   api/
     employees/route.ts            GET  public kiosk list (id, name, status — NO pins)
     punch/route.ts                POST punch in/out (toggles based on last punch)
     admin/login/route.ts          POST set admin session cookie
     admin/logout/route.ts         POST clear session
-    admin/employees/route.ts      GET/POST list & add employees (auth required)
-    admin/employees/[id]/route.ts DELETE soft-delete employee (auth required)
-    admin/report/route.ts         GET timesheet sessions + totals (auth required)
+    admin/employees/route.ts      GET/POST list & add employees
+    admin/employees/[id]/route.ts DELETE soft-delete employee
+    admin/punches/route.ts        POST add a manual session (forgot-to-punch)
+    admin/sessions/route.ts       PATCH edit / DELETE remove an existing session
+    admin/report/route.ts         GET timesheet sessions + per-employee totals
   lib/
     db.ts                 Neon client, lazy connection, ensureSchema()
-    auth.ts               Cookie session: checkPassword / create / destroy / isAuthed
+    auth.ts               Cookie session primitives (checkPassword/create/destroy/isAuthed)
+    admin.ts              Shared admin-route helpers (requireAdmin/fail/parseInOut)
 ```
 
 All route handlers are `export const dynamic = "force-dynamic"` (no caching —
 punches and reports must always be fresh).
+
+### Shared admin-route conventions (`app/lib/admin.ts`)
+Every authenticated admin route follows the same shape — **reuse these, don't
+re-inline them** (this is what the last cleanup consolidated):
+
+```ts
+const denied = await requireAdmin();   // 401 NextResponse, or null if authed
+if (denied) return denied;
+await ensureSchema();
+// ...
+if (bad) return fail("message", 400);  // JSON { error } shorthand
+```
+
+- `requireAdmin()` — auth gate, returns a 401 response or `null`.
+- `fail(message, status)` — `NextResponse.json({ error }, { status })`.
+- `parseInOut(inTs, outTs)` — validates a clock-in/out pair (valid dates,
+  out-after-in, ≤24h) and returns `{ inDate, outDate }` or `{ error }`. Shared by
+  the manual-entry (`punches`) and session-edit (`sessions`) routes — change a
+  time rule **here** and both stay consistent.
 
 ---
 
@@ -73,6 +107,11 @@ deploys/regions):
 - **`employees`** — `id, name, pin (text), active (bool), created_at`
 - **`punches`** — `id, employee_id (FK, ON DELETE CASCADE), kind ('in'|'out'), ts`
   plus index `idx_punches_employee_ts (employee_id, ts)`.
+
+There is **no sessions table** — a "session" is a derived concept: the report
+pairs each `in` punch with the next `out` punch per employee. Manual entries and
+edits are just inserts/updates/deletes on `punches`, so they flow through the
+same pairing automatically.
 
 The connection string is read lazily from the first of `DATABASE_URL`,
 `POSTGRES_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_URL_NON_POOLING` — so the
@@ -88,21 +127,44 @@ build never needs the env var, only runtime requests do.
 5. A live wall clock updates every second.
 
 ### Admin flow (`app/admin/*`)
-- `/admin` is a server component that checks `isAuthed()` and renders either the
-  login form or the dashboard.
-- Dashboard lets you **add** employees (name + 4-digit PIN), **remove** them
-  (soft-delete: `active = FALSE`, so historical timesheets survive), and view a
-  **timesheet** for the last 1 / 7 / 14 / 30 days.
-- `/api/admin/report` pairs consecutive in→out punches into sessions, computes
-  per-session minutes and per-employee totals. Unmatched `in` punches show as
-  "Still clocked in."
+`/admin` is a server component that checks `isAuthed()` and renders the login
+form or the dashboard. The dashboard (one client component) provides:
+
+- **Add / remove employees.** Remove is a soft-delete (`active = FALSE`) so
+  historical timesheets survive.
+- **Timezone setting.** A dropdown of IANA zones (full list via
+  `Intl.supportedValuesOf`, else a curated fallback). Persisted in
+  **`localStorage`** (`timeclock.tz`), defaults to the browser's zone. This is a
+  **per-browser** display/entry preference, not a server-side company setting.
+- **Add manual hours.** Pick an employee + clock-in/out date-times → inserts an
+  in/out punch pair (`POST /api/admin/punches`). For forgotten punches.
+- **Timesheet** for the last 1 / 7 / 14 / 30 days, with:
+  - **Total hours by employee** (session count + summed hours, sorted by hours).
+  - **Sessions** list. Each row has inline **Edit** (timezone-aware date-time
+    pickers; can also close a still-open session) and **Remove**
+    (`PATCH` / `DELETE /api/admin/sessions`). Unmatched `in` punches show as
+    "Still clocked in."
+
+### Timezone handling (important when touching admin time UI)
+Timestamps are stored in Postgres as UTC (`TIMESTAMPTZ`) and sent to the client
+as ISO strings. The **client** does all zone conversion against the selected
+`tz`, using three helpers in `dashboard.tsx`:
+
+- `fmtDateTime(iso, tz)` — display an instant in the chosen zone.
+- `isoToZonedInput(iso, tz)` — UTC ISO → `"YYYY-MM-DDTHH:mm"` for a
+  `datetime-local` input (pre-fill when editing).
+- `zonedWallTimeToISO(localStr, tz)` — the input's wall-clock string → UTC ISO
+  to send to the API.
+
+So: read with `isoToZonedInput`, write with `zonedWallTimeToISO`. The server
+trusts the ISO instants it receives and only validates ordering/range.
 
 ### Auth (`app/lib/auth.ts`)
 - Admin password from `ADMIN_PASSWORD` env (**defaults to `"admin"`** if unset).
 - Session cookie value = `HMAC-SHA256(password, "admin-session")`. Because the
   token is derived from the password, **changing `ADMIN_PASSWORD` instantly
-  invalidates all existing sessions**.
-- Cookie: httpOnly, sameSite=lax, secure in production, 12-hour expiry.
+  invalidates all existing sessions.**
+- Cookie `tc_admin`: httpOnly, sameSite=lax, secure in production, 12-hour expiry.
 - Password and cookie comparisons use `timingSafeEqual`.
 
 ---
@@ -111,72 +173,88 @@ build never needs the env var, only runtime requests do.
 
 | Variable         | Required | Notes                                                      |
 | ---------------- | -------- | ---------------------------------------------------------- |
-| `DATABASE_URL`   | **Yes**  | Neon Postgres connection string. Auto-provisioned if you add the Neon integration on Vercel. Without it, all DB routes 500. |
-| `ADMIN_PASSWORD` | **Yes*** | Admin login password. *Defaults to `"admin"` — **set a real one before going live.** |
+| `DATABASE_URL`   | **Yes**  | Neon Postgres connection string. Set in `.env.local` (local) and in Vercel Production. Without it, all DB routes 500. |
+| `ADMIN_PASSWORD` | **Yes*** | Admin login password. *Currently `"admin"` in prod — **change it.** |
 
-Locally, put these in `.env.local` (git-ignored). `npm run dev` then works.
+Both are set in Vercel Production and in local `.env.local` (git-ignored).
 
----
-
-## 6. Going live (fixing "no production deployments")
-
-The code is pushed; Vercel just hasn't built a production deployment. Work
-through these in order:
-
-1. **Connect the Git repo to the Vercel project.**
-   Vercel dashboard → the `timeclock` project → **Settings → Git** → connect
-   `pxlhierarchy/timeclock`. If no project exists yet, **Add New → Project →
-   Import** that repo. (Vercel only auto-deploys *new* pushes after connecting,
-   so do step 4 to trigger the first build.)
-
-2. **Add the database.** Project → **Storage → Create / Connect → Neon
-   Postgres**. This auto-injects `DATABASE_URL` into all environments. (Vercel
-   Postgres/KV are retired — use the Neon Marketplace integration.)
-
-3. **Set `ADMIN_PASSWORD`** under Settings → Environment Variables (Production)
-   to something other than `admin`.
-
-4. **Trigger the first production build** — either push a commit to `master`
-   (e.g. commit the pending `.gitignore` change) or click **Deploy / Redeploy**
-   in the dashboard. Confirm Settings → Git → **Production Branch = `master`**
-   (Vercel may default it to `main`).
-
-5. **Verify after deploy:** open the URL → kiosk loads (empty list is fine) →
-   `/admin` → log in → add an employee → punch in/out on the kiosk → see the
-   session in the timesheet. `ensureSchema()` creates the tables on the first
-   request, so no manual migration is needed.
-
-> CLI alternative (Vercel CLI is **not** installed here): `npm i -g vercel`,
-> then `vercel link`, `vercel env pull`, and `vercel --prod`.
+**Change the production admin password:**
+```bash
+printf 'NEW_STRONG_PASSWORD' | vercel env rm ADMIN_PASSWORD production -y
+printf 'NEW_STRONG_PASSWORD' | vercel env add ADMIN_PASSWORD production
+vercel --prod            # redeploy so the new value takes effect
+```
+(Also update `.env.local` for local dev. Changing it logs out all admin sessions.)
 
 ---
 
-## 7. Known gaps / future work
+## 6. Local development
+
+```bash
+npm install
+# .env.local already exists with DATABASE_URL and ADMIN_PASSWORD
+npm run dev          # http://localhost:3000  (kiosk) and /admin
+npm run build        # production build
+npm run start        # serve the production build
+npx tsc --noEmit     # typecheck (run this before every commit)
+```
+
+> ⚠️ Local dev and production share the **same Neon database** — test data you
+> create locally shows up live, and vice-versa. Clean up after experiments.
+
+---
+
+## 7. Deploying
+
+The repo is linked to Vercel and the CLI is installed:
+
+```bash
+vercel --prod        # build + deploy to production (and the custom domain)
+vercel env ls        # inspect production env vars
+vercel logs <url>    # runtime logs
+```
+
+`ensureSchema()` creates tables on the first request, so no migration step is
+needed. There is **no GitHub auto-deploy** wired up yet — deploys are manual via
+the CLI. (To enable push-to-deploy: Vercel dashboard → project → Settings → Git →
+connect `pxlhierarchy/timeclock`, Production Branch = `master`.)
+
+---
+
+## 8. Adding features without breaking things
+
+- **New admin API route?** Start with the `requireAdmin()` / `fail()` pattern
+  from §3 and put any time validation in `parseInOut` (extend it rather than
+  re-checking inline).
+- **Touching the timesheet/time UI?** Respect the client-side timezone helpers
+  (§4) — never format a stored UTC instant without the selected `tz`.
+- **Schema change?** Add an idempotent `CREATE TABLE/ALTER ... IF NOT EXISTS` (or
+  an additive migration) inside `ensureSchema()`; it runs on first request per
+  warm instance. Avoid destructive changes to `punches`/`employees` — the report
+  pairing and soft-delete depend on their current shape.
+- **Styling?** Edit CSS variables in `globals.css`; components reference classes
+  (`.panel`, `.btn`, `.btn.ghost`, `.btn.danger`, `.pill`, `.field`, `.row`,
+  `.mono-num`), so token changes restyle everything at once.
+- **Always run `npx tsc --noEmit`** before committing; the API routes are
+  curl-testable with a logged-in cookie jar (see git history / examples).
+- **AGENTS.md** warns this Next.js build has breaking changes vs. older docs —
+  consult `node_modules/next/dist/docs/` before changing framework-level code
+  (route signatures, caching, `cookies()`, etc.).
+
+---
+
+## 9. Known gaps / future work
 
 - **PINs stored in plaintext** and shown in the admin table. Fine for a trusted
   back-office kiosk; hash them (e.g. bcrypt) if that's a concern.
 - **No rate limiting** on PIN or admin-password attempts — brute-forceable.
 - **Single admin password**, no per-user admin accounts or audit log.
-- **No manual punch correction** — an admin can't edit/delete a bad punch or fix
-  a forgotten clock-out; they only show as "Still clocked in."
-- **Timezone:** sessions/totals are computed from UTC timestamps and formatted in
-  the *viewer's* browser locale. Fine for one timezone; revisit for multi-region.
-- **No CSV/export** of timesheets.
-- **No tests.**
-- **Default `ADMIN_PASSWORD = "admin"`** — must be overridden in production.
-
----
-
-## 8. Local development
-
-```bash
-npm install
-# create .env.local with DATABASE_URL=... and ADMIN_PASSWORD=...
-npm run dev          # http://localhost:3000  (kiosk) and /admin
-npm run build        # production build
-npm run start        # serve the production build
-```
-
-> Note: this project's `AGENTS.md` warns that this Next.js build has breaking
-> changes vs. older docs — consult `node_modules/next/dist/docs/` before
-> changing framework-level code.
+- **Timezone is per-browser** (`localStorage`), not a shared company setting. If
+  multiple admins need one fixed zone, store it server-side (e.g. a `settings`
+  table) instead.
+- **Manual entries can't span >24h** and the editor works one session at a time —
+  no bulk edit.
+- **No CSV / export** of timesheets.
+- **No automated tests** (only `tsc` + manual curl/UI checks).
+- **No GitHub auto-deploy** — deploys are manual `vercel --prod`.
+- **Default `ADMIN_PASSWORD = "admin"`** still live in production — change it.

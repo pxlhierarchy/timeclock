@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/app/lib/db";
-import { isAuthed } from "@/app/lib/auth";
+import { requireAdmin } from "@/app/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +13,8 @@ type Row = {
 };
 
 export async function GET(request: Request) {
-  if (!(await isAuthed())) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
+  const denied = await requireAdmin();
+  if (denied) return denied;
   await ensureSchema();
 
   const { searchParams } = new URL(request.url);
