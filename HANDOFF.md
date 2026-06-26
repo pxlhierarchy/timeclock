@@ -60,6 +60,7 @@ app/
   api/
     employees/route.ts            GET  public kiosk list (id, name, status — NO pins)
     punch/route.ts                POST punch in/out (toggles based on last punch)
+    my-hours/route.ts             POST PIN-gated: an employee's today/this-week totals
     admin/login/route.ts          POST set admin session cookie
     admin/logout/route.ts         POST clear session
     admin/employees/route.ts      GET/POST list & add employees
@@ -71,6 +72,7 @@ app/
     db.ts                 Neon client, lazy connection, ensureSchema()
     auth.ts               Cookie session primitives (checkPassword/create/destroy/isAuthed)
     admin.ts              Shared admin-route helpers (requireAdmin/fail/parseInOut)
+    sessions.ts           pairPunches() — shared in->out pairing (report + my-hours)
 ```
 
 All route handlers are `export const dynamic = "force-dynamic"` (no caching —
@@ -120,11 +122,18 @@ build never needs the env var, only runtime requests do.
 ### Kiosk flow (`app/page.tsx`)
 1. Fetches `/api/employees` (active employees + current in/out status). PINs are
    never sent to the client.
-2. Tap a name → PIN pad modal. On the 4th digit it auto-submits to `/api/punch`.
-3. `/api/punch` verifies the PIN, looks at the employee's **last** punch, and
-   inserts the opposite `kind` (in→out, out→in). Returns name/action/timestamp.
-4. A confirmation card shows for ~3.2s, then the list refreshes.
-5. A live wall clock updates every second.
+2. Tap a name → PIN pad modal. Enter the 4-digit PIN, then choose an action:
+   - **Clock in / out** → `/api/punch` verifies the PIN, looks at the employee's
+     **last** punch, and inserts the opposite `kind` (in→out, out→in). Returns
+     name/action/timestamp; a confirmation card shows for ~3.2s.
+   - **My hours** → `/api/my-hours` verifies the PIN and returns the employee's
+     running totals for **today** and **this week** (including time on a shift
+     that's still open), shown in the modal. Day/week boundaries use `KIOSK_TZ`.
+3. The list refreshes after a punch. A live wall clock updates every second.
+
+> Note: entering the PIN no longer auto-punches — the employee taps **Clock
+> in/out** or **My hours**. This is intentional (enables the hours view and
+> prevents accidental punches).
 
 ### Admin flow (`app/admin/*`)
 `/admin` is a server component that checks `isAuthed()` and renders the login
@@ -175,8 +184,11 @@ trusts the ISO instants it receives and only validates ordering/range.
 | ---------------- | -------- | ---------------------------------------------------------- |
 | `DATABASE_URL`   | **Yes**  | Neon Postgres connection string. Set in `.env.local` (local) and in Vercel Production. Without it, all DB routes 500. |
 | `ADMIN_PASSWORD` | **Yes*** | Admin login password. *Currently `"admin"` in prod — **change it.** |
+| `KIOSK_TZ`       | No       | IANA timezone for the kiosk "today / this week" boundaries in `/api/my-hours`. Defaults to `America/New_York`. |
 
-Both are set in Vercel Production and in local `.env.local` (git-ignored).
+`DATABASE_URL` and `ADMIN_PASSWORD` are set in Vercel Production and in local
+`.env.local` (git-ignored). `KIOSK_TZ` is optional (set it in Vercel if the
+business isn't US-Eastern).
 
 **Change the production admin password:**
 ```bash

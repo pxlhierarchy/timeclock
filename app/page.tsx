@@ -15,6 +15,19 @@ type Result = {
   ts: string;
 };
 
+type Hours = {
+  name: string;
+  status: "in" | "out";
+  openSince: string | null;
+  todayMinutes: number;
+  weekMinutes: number;
+  timezone: string;
+};
+
+function fmtHM(minutes: number) {
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export default function Kiosk() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,39 +157,62 @@ function PinPad({
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hours, setHours] = useState<Hours | null>(null);
 
-  const submit = useCallback(
-    async (value: string) => {
-      setBusy(true);
-      setError("");
-      try {
-        const res = await fetch("/api/punch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ employeeId: employee.id, pin: value }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error || "Something went wrong.");
-          setPin("");
-          setBusy(false);
-          return;
-        }
-        onPunched(data as Result);
-      } catch {
-        setError("Network error. Try again.");
+  const complete = pin.length === 4;
+
+  const punch = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/punch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId: employee.id, pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Something went wrong.");
         setPin("");
         setBusy(false);
+        return;
       }
-    },
-    [employee.id, onPunched]
-  );
+      onPunched(data as Result);
+    } catch {
+      setError("Network error. Try again.");
+      setPin("");
+      setBusy(false);
+    }
+  }, [employee.id, pin, onPunched]);
+
+  const viewHours = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/my-hours", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId: employee.id, pin }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Something went wrong.");
+        setPin("");
+      } else {
+        setHours(data as Hours);
+      }
+    } catch {
+      setError("Network error. Try again.");
+      setPin("");
+    } finally {
+      setBusy(false);
+    }
+  }, [employee.id, pin]);
 
   function press(digit: string) {
     if (busy || pin.length >= 4) return;
-    const next = pin + digit;
-    setPin(next);
-    if (next.length === 4) submit(next);
+    setError("");
+    setPin((p) => p + digit);
   }
 
   function back() {
@@ -185,15 +221,53 @@ function PinPad({
     setPin((p) => p.slice(0, -1));
   }
 
+  // Running-total view (shown after a correct PIN + "My hours").
+  if (hours) {
+    return (
+      <div className="overlay" onClick={onCancel}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <h2>{hours.name}</h2>
+          <p className="hint">
+            {hours.status === "in" && hours.openSince
+              ? `Clocked in since ${new Date(hours.openSince).toLocaleTimeString([], {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}`
+              : "Clocked out"}
+          </p>
+
+          <div className="hours-grid">
+            <div className="hours-stat">
+              <span className="hours-label">Today</span>
+              <span className="hours-value">{fmtHM(hours.todayMinutes)}</span>
+            </div>
+            <div className="hours-stat">
+              <span className="hours-label">This week</span>
+              <span className="hours-value">{fmtHM(hours.weekMinutes)}</span>
+            </div>
+          </div>
+          {hours.status === "in" && (
+            <p className="muted" style={{ fontSize: 12 }}>
+              Includes time on your current shift, still running.
+            </p>
+          )}
+
+          <button className="btn" style={{ width: "100%" }} onClick={punch} disabled={busy}>
+            {employee.status === "in" ? "Clock out now" : "Clock in now"}
+          </button>
+          <button className="modal-cancel" onClick={onCancel}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="overlay" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>{employee.name}</h2>
-        <p className="hint">
-          {employee.status === "in"
-            ? "Enter PIN to clock out"
-            : "Enter PIN to clock in"}
-        </p>
+        <p className="hint">Enter your 4-digit PIN</p>
 
         <div className="pin-dots">
           {[0, 1, 2, 3].map((i) => (
@@ -219,6 +293,15 @@ function PinPad({
         </div>
 
         <p className="modal-error">{error}</p>
+
+        <div className="pin-actions">
+          <button className="btn" onClick={punch} disabled={!complete || busy}>
+            {employee.status === "in" ? "Clock out" : "Clock in"}
+          </button>
+          <button className="btn ghost" onClick={viewHours} disabled={!complete || busy}>
+            My hours
+          </button>
+        </div>
         <button className="modal-cancel" onClick={onCancel}>
           Cancel
         </button>

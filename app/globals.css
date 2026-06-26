@@ -278,6 +278,49 @@ a:hover {
   font-size: 14px;
 }
 
+.pin-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.pin-actions .btn {
+  padding: 14px 0;
+}
+
+.hours-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 18px 0 12px;
+}
+
+.hours-stat {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hours-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.hours-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 16px rgba(77, 255, 143, 0.25);
+}
+
 .modal-cancel {
   margin-top: 18px;
   background: transparent;
