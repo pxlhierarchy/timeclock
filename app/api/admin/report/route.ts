@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   const days = Math.min(Math.max(Number(searchParams.get("days")) || 14, 1), 365);
 
   const rows = (await sql`
-    SELECT p.id, p.employee_id, e.name, p.kind, p.ts
+    SELECT p.id, p.employee_id, e.name, p.kind, p.ts, p.note
     FROM punches p
     JOIN employees e ON e.id = p.employee_id
     WHERE p.ts >= now() - (${days} || ' days')::interval

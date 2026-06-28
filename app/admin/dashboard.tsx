@@ -12,6 +12,7 @@ type Session = {
   in: string;
   out: string | null;
   minutes: number | null;
+  note: string | null;
 };
 
 type Total = { employeeId: number; name: string; minutes: number; sessions: number };
@@ -142,6 +143,7 @@ export default function Dashboard() {
   const [mEmpId, setMEmpId] = useState("");
   const [mIn, setMIn] = useState("");
   const [mOut, setMOut] = useState("");
+  const [mNote, setMNote] = useState("");
   const [mErr, setMErr] = useState("");
   const [mMsg, setMMsg] = useState("");
   const [mBusy, setMBusy] = useState(false);
@@ -150,6 +152,7 @@ export default function Dashboard() {
   const [editId, setEditId] = useState<number | null>(null);
   const [editIn, setEditIn] = useState("");
   const [editOut, setEditOut] = useState("");
+  const [editNote, setEditNote] = useState("");
   const [editErr, setEditErr] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
@@ -229,7 +232,12 @@ export default function Dashboard() {
       const res = await fetch("/api/admin/punches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ employeeId: Number(mEmpId), inTs: inISO, outTs: outISO }),
+        body: JSON.stringify({
+          employeeId: Number(mEmpId),
+          inTs: inISO,
+          outTs: outISO,
+          note: mNote.trim() || null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -238,6 +246,7 @@ export default function Dashboard() {
         setMMsg(`Added ${fmtHours(data.minutes)} for ${data.employee.name}.`);
         setMIn("");
         setMOut("");
+        setMNote("");
         await loadReport(days);
       }
     } finally {
@@ -250,6 +259,7 @@ export default function Dashboard() {
     setEditId(s.inId);
     setEditIn(isoToZonedInput(s.in, tz));
     setEditOut(s.out ? isoToZonedInput(s.out, tz) : "");
+    setEditNote(s.note ?? "");
   }
 
   function cancelEdit() {
@@ -268,7 +278,13 @@ export default function Dashboard() {
       const res = await fetch("/api/admin/sessions", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inId: s.inId, outId: s.outId, inTs: inISO, outTs: outISO }),
+        body: JSON.stringify({
+          inId: s.inId,
+          outId: s.outId,
+          inTs: inISO,
+          outTs: outISO,
+          note: editNote.trim() || null,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -415,6 +431,14 @@ export default function Dashboard() {
               onChange={(e) => setMOut(e.target.value)}
             />
           </div>
+          <div className="field" style={{ flex: 1, minWidth: 180 }}>
+            <label>Note (optional)</label>
+            <input
+              value={mNote}
+              onChange={(e) => setMNote(e.target.value)}
+              placeholder="e.g. covered the closing shift"
+            />
+          </div>
           <button className="btn" type="submit" disabled={mBusy}>
             {mBusy ? "Adding…" : "Add hours"}
           </button>
@@ -504,6 +528,7 @@ export default function Dashboard() {
                 <th>Clock in</th>
                 <th>Clock out</th>
                 <th>Duration</th>
+                <th>Note</th>
                 <th></th>
               </tr>
             </thead>
@@ -534,6 +559,14 @@ export default function Dashboard() {
                       )}
                     </td>
                     <td className="muted">—</td>
+                    <td>
+                      <input
+                        value={editNote}
+                        onChange={(e) => setEditNote(e.target.value)}
+                        placeholder="Add a note…"
+                        style={{ fontSize: 13, padding: "7px 8px", minWidth: 140 }}
+                      />
+                    </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button
                         className="btn"
@@ -570,6 +603,13 @@ export default function Dashboard() {
                       )}
                     </td>
                     <td>{s.minutes != null ? fmtHours(s.minutes) : "—"}</td>
+                    <td style={{ maxWidth: 220, whiteSpace: "normal" }}>
+                      {s.note ? (
+                        s.note
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button
                         className="btn ghost"

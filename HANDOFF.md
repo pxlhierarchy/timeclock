@@ -1,6 +1,6 @@
 # Time Clock — Project Handoff
 
-_Last updated: 2026-06-24_
+_Last updated: 2026-06-28_
 
 An employee time-clock kiosk: staff tap their name and enter a 4-digit PIN to
 punch in/out; an admin area manages employees, corrects time, and views
@@ -107,8 +107,11 @@ Two tables, auto-created on first request by `ensureSchema()` (idempotent
 deploys/regions):
 
 - **`employees`** — `id, name, pin (text), active (bool), created_at`
-- **`punches`** — `id, employee_id (FK, ON DELETE CASCADE), kind ('in'|'out'), ts`
-  plus index `idx_punches_employee_ts (employee_id, ts)`.
+- **`punches`** — `id, employee_id (FK, ON DELETE CASCADE), kind ('in'|'out'), ts,
+  note (text, nullable)` plus index `idx_punches_employee_ts (employee_id, ts)`.
+  A per-session **note** is stored on the session's `in` punch (added via an
+  idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS note` in `ensureSchema()`);
+  the pairing carries it onto the derived session.
 
 There is **no sessions table** — a "session" is a derived concept: the report
 pairs each `in` punch with the next `out` punch per employee. Manual entries and
@@ -145,14 +148,16 @@ form or the dashboard. The dashboard (one client component) provides:
   `Intl.supportedValuesOf`, else a curated fallback). Persisted in
   **`localStorage`** (`timeclock.tz`), defaults to the browser's zone. This is a
   **per-browser** display/entry preference, not a server-side company setting.
-- **Add manual hours.** Pick an employee + clock-in/out date-times → inserts an
-  in/out punch pair (`POST /api/admin/punches`). For forgotten punches.
+- **Add manual hours.** Pick an employee + clock-in/out date-times (and an
+  optional **note**) → inserts an in/out punch pair (`POST /api/admin/punches`).
+  For forgotten punches.
 - **Timesheet** for the last 1 / 7 / 14 / 30 days, with:
   - **Total hours by employee** (session count + summed hours, sorted by hours).
-  - **Sessions** list. Each row has inline **Edit** (timezone-aware date-time
-    pickers; can also close a still-open session) and **Remove**
-    (`PATCH` / `DELETE /api/admin/sessions`). Unmatched `in` punches show as
-    "Still clocked in."
+  - **Sessions** list. Each row shows its **note** and has inline **Edit**
+    (timezone-aware date-time pickers + a note field; can also close a still-open
+    session) and **Remove** (`PATCH` / `DELETE /api/admin/sessions`). Editing sends
+    `note` in the PATCH — omitting it leaves the note unchanged, an empty string
+    clears it. Unmatched `in` punches show as "Still clocked in."
 
 ### Timezone handling (important when touching admin time UI)
 Timestamps are stored in Postgres as UTC (`TIMESTAMPTZ`) and sent to the client

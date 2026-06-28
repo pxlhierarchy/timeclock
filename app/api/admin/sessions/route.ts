@@ -17,6 +17,13 @@ export async function PATCH(request: Request) {
   const outId = body.outId == null ? null : Number(body.outId);
   const inTs = String(body.inTs ?? "");
   const outTs = body.outTs == null || body.outTs === "" ? null : String(body.outTs);
+  // A note is optional; an empty string clears it. `undefined` leaves it unchanged.
+  const note =
+    body.note === undefined
+      ? undefined
+      : body.note == null || String(body.note).trim() === ""
+        ? null
+        : String(body.note).trim();
 
   if (!inId) return fail("Missing session reference.", 400);
 
@@ -37,6 +44,10 @@ export async function PATCH(request: Request) {
   if (!inRow[0]) return fail("Session not found.", 404);
 
   await sql`UPDATE punches SET ts = ${inDate.toISOString()} WHERE id = ${inId} AND kind = 'in'`;
+
+  if (note !== undefined) {
+    await sql`UPDATE punches SET note = ${note} WHERE id = ${inId} AND kind = 'in'`;
+  }
 
   if (outDate) {
     if (outId) {

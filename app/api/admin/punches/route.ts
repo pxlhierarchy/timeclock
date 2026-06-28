@@ -20,15 +20,20 @@ export async function POST(request: Request) {
   if ("error" in parsed) return fail(parsed.error, 400);
   const { inDate, outDate } = parsed;
 
+  const note =
+    body.note == null || String(body.note).trim() === ""
+      ? null
+      : String(body.note).trim();
+
   const emp = (await sql`
     SELECT id, name FROM employees WHERE id = ${employeeId} AND active = TRUE
   `) as { id: number; name: string }[];
   if (!emp[0]) return fail("Employee not found.", 404);
 
   await sql`
-    INSERT INTO punches (employee_id, kind, ts)
-    VALUES (${employeeId}, 'in', ${inDate.toISOString()}),
-           (${employeeId}, 'out', ${outDate.toISOString()})
+    INSERT INTO punches (employee_id, kind, ts, note)
+    VALUES (${employeeId}, 'in', ${inDate.toISOString()}, ${note}),
+           (${employeeId}, 'out', ${outDate.toISOString()}, NULL)
   `;
 
   return NextResponse.json({
