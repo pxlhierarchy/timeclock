@@ -7,6 +7,8 @@ export type PunchRow = {
   kind: "in" | "out";
   ts: string;
   note?: string | null;
+  paid?: boolean;
+  paid_at?: string | null;
 };
 
 export type PairedSession = {
@@ -17,6 +19,8 @@ export type PairedSession = {
   out: string | null;
   minutes: number | null;
   note: string | null;
+  paid: boolean;
+  paidAt: string | null;
 };
 
 // Pair each 'in' punch with the following 'out' punch, per employee. Rows MUST
@@ -42,6 +46,8 @@ export function pairPunches(rows: PunchRow[]): PairedSession[] {
             (new Date(r.ts).getTime() - new Date(o.ts).getTime()) / 60000
           ),
           note: o.note ?? null,
+          paid: o.paid ?? false,
+          paidAt: o.paid_at ?? null,
         });
         open.delete(r.employee_id);
       }
@@ -57,6 +63,8 @@ export function pairPunches(rows: PunchRow[]): PairedSession[] {
       out: null,
       minutes: null,
       note: o.note ?? null,
+      paid: o.paid ?? false,
+      paidAt: o.paid_at ?? null,
     });
   }
 

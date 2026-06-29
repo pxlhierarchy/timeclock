@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   const days = Math.min(Math.max(Number(searchParams.get("days")) || 14, 1), 365);
 
   const rows = (await sql`
-    SELECT p.id, p.employee_id, e.name, p.kind, p.ts, p.note
+    SELECT p.id, p.employee_id, e.name, p.kind, p.ts, p.note, p.paid, p.paid_at
     FROM punches p
     JOIN employees e ON e.id = p.employee_id
     WHERE p.ts >= now() - (${days} || ' days')::interval
@@ -32,12 +32,19 @@ export async function GET(request: Request) {
     .map((s) => ({ ...s, name: nameById.get(s.employeeId) ?? "" }))
     .sort((a, b) => new Date(b.in).getTime() - new Date(a.in).getTime());
 
-  // Totals per employee (completed sessions only).
-  const totals = new Map<number, { name: string; minutes: number; sessions: number }>();
+  // Totals per employee (completed sessions only), split into paid vs unpaid.
+  const totals = new Map<
+    number,
+    { name: string; minutes: number; paidMinutes: number; unpaidMinutes: number; sessions: number }
+  >();
   for (const s of sessions) {
     if (s.minutes == null) continue;
-    const t = totals.get(s.employeeId) || { name: s.name, minutes: 0, sessions: 0 };
+    const t =
+      totals.get(s.employeeId) ||
+      { name: s.name, minutes: 0, paidMinutes: 0, unpaidMinutes: 0, sessions: 0 };
     t.minutes += s.minutes;
+    if (s.paid) t.paidMinutes += s.minutes;
+    else t.unpaidMinutes += s.minutes;
     t.sessions += 1;
     totals.set(s.employeeId, t);
   }
@@ -50,8 +57,11 @@ export async function GET(request: Request) {
         employeeId,
         name: t.name,
         minutes: t.minutes,
+        paidMinutes: t.paidMinutes,
+        unpaidMinutes: t.unpaidMinutes,
         sessions: t.sessions,
       }))
-      .sort((a, b) => b.minutes - a.minutes),
+      // Most still-owed first, so payroll work rises to the top.
+      .sort((a, b) => b.unpaidMinutes - a.unpaidMinutes || b.minutes - a.minutes),
   });
 }

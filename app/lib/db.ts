@@ -53,6 +53,9 @@ export function ensureSchema(): Promise<void> {
       await sql`CREATE INDEX IF NOT EXISTS idx_punches_employee_ts ON punches (employee_id, ts)`;
       // Additive: a per-session note, stored on the session's 'in' punch.
       await sql`ALTER TABLE punches ADD COLUMN IF NOT EXISTS note TEXT`;
+      // Additive: per-session "paid" state, also stored on the 'in' punch.
+      await sql`ALTER TABLE punches ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT FALSE`;
+      await sql`ALTER TABLE punches ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`;
     })().catch((err) => {
       // Reset so the next request retries instead of caching a failure.
       schemaReady = null;
@@ -76,4 +79,6 @@ export type Punch = {
   kind: "in" | "out";
   ts: string;
   note: string | null;
+  paid: boolean;
+  paid_at: string | null;
 };

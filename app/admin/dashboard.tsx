@@ -13,9 +13,18 @@ type Session = {
   out: string | null;
   minutes: number | null;
   note: string | null;
+  paid: boolean;
+  paidAt: string | null;
 };
 
-type Total = { employeeId: number; name: string; minutes: number; sessions: number };
+type Total = {
+  employeeId: number;
+  name: string;
+  minutes: number;
+  paidMinutes: number;
+  unpaidMinutes: number;
+  sessions: number;
+};
 
 const TZ_KEY = "timeclock.tz";
 
@@ -311,6 +320,30 @@ export default function Dashboard() {
     }
   }
 
+  // Mark one or many sessions paid/unpaid (per-row toggle or per-employee bulk).
+  const [paidBusy, setPaidBusy] = useState(false);
+  async function markPaid(inIds: number[], paid: boolean) {
+    if (inIds.length === 0) return;
+    setPaidBusy(true);
+    try {
+      const res = await fetch("/api/admin/paid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inIds, paid }),
+      });
+      if (res.ok) await loadReport(days);
+    } finally {
+      setPaidBusy(false);
+    }
+  }
+
+  // All completed, still-unpaid sessions for one employee in the current view.
+  function unpaidInIdsFor(employeeId: number): number[] {
+    return sessions
+      .filter((s) => s.employeeId === employeeId && s.minutes != null && !s.paid)
+      .map((s) => s.inId);
+  }
+
   async function removeEmployee(emp: Employee) {
     if (!confirm(`Remove ${emp.name}? Their past records are kept for reports.`)) {
       return;
@@ -502,17 +535,43 @@ export default function Dashboard() {
               <tr>
                 <th>Employee</th>
                 <th>Sessions</th>
+                <th>Unpaid</th>
+                <th>Paid</th>
                 <th>Total hours</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {totals.map((t) => (
-                <tr key={t.employeeId}>
-                  <td>{t.name}</td>
-                  <td>{t.sessions}</td>
-                  <td className="mono-num">{fmtHours(t.minutes)}</td>
-                </tr>
-              ))}
+              {totals.map((t) => {
+                const unpaidIds = unpaidInIdsFor(t.employeeId);
+                return (
+                  <tr key={t.employeeId}>
+                    <td>{t.name}</td>
+                    <td>{t.sessions}</td>
+                    <td className="mono-num">
+                      {t.unpaidMinutes > 0 ? (
+                        fmtHours(t.unpaidMinutes)
+                      ) : (
+                        <span className="muted">0h 0m</span>
+                      )}
+                    </td>
+                    <td className="mono-num muted">{fmtHours(t.paidMinutes)}</td>
+                    <td className="mono-num">{fmtHours(t.minutes)}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {unpaidIds.length > 0 && (
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "7px 12px", fontSize: 12 }}
+                          onClick={() => markPaid(unpaidIds, true)}
+                          disabled={paidBusy}
+                        >
+                          Mark {unpaidIds.length} paid
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -529,6 +588,7 @@ export default function Dashboard() {
                 <th>Clock out</th>
                 <th>Duration</th>
                 <th>Note</th>
+                <th>Paid</th>
                 <th></th>
               </tr>
             </thead>
@@ -567,6 +627,7 @@ export default function Dashboard() {
                         style={{ fontSize: 13, padding: "7px 8px", minWidth: 140 }}
                       />
                     </td>
+                    <td className="muted">—</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button
                         className="btn"
@@ -608,6 +669,34 @@ export default function Dashboard() {
                         s.note
                       ) : (
                         <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {s.minutes == null ? (
+                        <span className="muted">—</span>
+                      ) : s.paid ? (
+                        <button
+                          className="pill in"
+                          title={
+                            s.paidAt
+                              ? `Paid ${fmtDateTime(s.paidAt, tz)} — click to undo`
+                              : "Click to mark unpaid"
+                          }
+                          onClick={() => markPaid([s.inId], false)}
+                          disabled={paidBusy}
+                          style={{ cursor: "pointer", appearance: "none", font: "inherit" }}
+                        >
+                          ✓ Paid
+                        </button>
+                      ) : (
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "7px 12px", fontSize: 12 }}
+                          onClick={() => markPaid([s.inId], true)}
+                          disabled={paidBusy}
+                        >
+                          Mark paid
+                        </button>
                       )}
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>

@@ -1,6 +1,6 @@
 # Time Clock — Project Handoff
 
-_Last updated: 2026-06-28_
+_Last updated: 2026-06-29_
 
 An employee time-clock kiosk: staff tap their name and enter a 4-digit PIN to
 punch in/out; an admin area manages employees, corrects time, and views
@@ -67,6 +67,7 @@ app/
     admin/employees/[id]/route.ts DELETE soft-delete employee
     admin/punches/route.ts        POST add a manual session (forgot-to-punch)
     admin/sessions/route.ts       PATCH edit / DELETE remove an existing session
+    admin/paid/route.ts           POST mark sessions paid/unpaid (by clock-in id)
     admin/report/route.ts         GET timesheet sessions + per-employee totals
   lib/
     db.ts                 Neon client, lazy connection, ensureSchema()
@@ -108,10 +109,11 @@ deploys/regions):
 
 - **`employees`** — `id, name, pin (text), active (bool), created_at`
 - **`punches`** — `id, employee_id (FK, ON DELETE CASCADE), kind ('in'|'out'), ts,
-  note (text, nullable)` plus index `idx_punches_employee_ts (employee_id, ts)`.
-  A per-session **note** is stored on the session's `in` punch (added via an
-  idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS note` in `ensureSchema()`);
-  the pairing carries it onto the derived session.
+  note (text, nullable), paid (bool, default false), paid_at (timestamptz,
+  nullable)` plus index `idx_punches_employee_ts (employee_id, ts)`.
+  Per-session **note** and **paid** state are stored on the session's `in` punch
+  (all added via idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in
+  `ensureSchema()`); the pairing carries them onto the derived session.
 
 There is **no sessions table** — a "session" is a derived concept: the report
 pairs each `in` punch with the next `out` punch per employee. Manual entries and
@@ -152,12 +154,18 @@ form or the dashboard. The dashboard (one client component) provides:
   optional **note**) → inserts an in/out punch pair (`POST /api/admin/punches`).
   For forgotten punches.
 - **Timesheet** for the last 1 / 7 / 14 / 30 days, with:
-  - **Total hours by employee** (session count + summed hours, sorted by hours).
-  - **Sessions** list. Each row shows its **note** and has inline **Edit**
-    (timezone-aware date-time pickers + a note field; can also close a still-open
-    session) and **Remove** (`PATCH` / `DELETE /api/admin/sessions`). Editing sends
-    `note` in the PATCH — omitting it leaves the note unchanged, an empty string
-    clears it. Unmatched `in` punches show as "Still clocked in."
+  - **Total hours by employee** (session count + **unpaid / paid / total** hours,
+    sorted by most unpaid first), with a **Mark N paid** button per employee that
+    marks all their unpaid completed sessions in the period paid at once.
+  - **Sessions** list. Each row shows its **note** and a **Paid** toggle (a green
+    "✓ Paid" badge you can click to undo, or a "Mark paid" button), plus inline
+    **Edit** (timezone-aware date-time pickers + a note field; can also close a
+    still-open session) and **Remove** (`PATCH` / `DELETE /api/admin/sessions`).
+    Editing sends `note` in the PATCH — omitting it leaves the note unchanged, an
+    empty string clears it. Paid state is toggled separately via
+    `POST /api/admin/paid` (`{ inIds: number[], paid: boolean }` — one id for a row,
+    many for the bulk button; stamps/clears `paid_at`). Unmatched `in` punches show
+    as "Still clocked in" and can't be marked paid (no duration yet).
 
 ### Timezone handling (important when touching admin time UI)
 Timestamps are stored in Postgres as UTC (`TIMESTAMPTZ`) and sent to the client
