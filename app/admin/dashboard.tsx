@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Employee = { id: number; name: string; pin: string; active: boolean };
 
@@ -27,6 +27,16 @@ type Total = {
 };
 
 const TZ_KEY = "timeclock.tz";
+
+// Shared styling for the timesheet's inline dropdowns (period + employee filter).
+const selectStyle: React.CSSProperties = {
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  color: "var(--text)",
+  padding: "10px 12px",
+  fontSize: 15,
+};
 
 // Full IANA list when the browser supports it, else a sensible curated fallback.
 function timeZoneList(): string[] {
@@ -140,6 +150,8 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [totals, setTotals] = useState<Total[]>([]);
   const [days, setDays] = useState(14);
+  // Timesheet employee filter: null = show everyone, else a single employee id.
+  const [filterEmpId, setFilterEmpId] = useState<number | null>(null);
 
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
@@ -201,6 +213,37 @@ export default function Dashboard() {
   useEffect(() => {
     loadReport(days);
   }, [loadReport, days]);
+
+  // Employees who have any punches in the current period — the filter's options.
+  // Derived from the report (not the active-employee list) so a removed employee
+  // with history in the window is still selectable.
+  const employeeOptions = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const s of sessions) if (!byId.has(s.employeeId)) byId.set(s.employeeId, s.name);
+    return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [sessions]);
+
+  // Drop a stale selection when the chosen employee falls out of the period.
+  useEffect(() => {
+    if (filterEmpId != null && !employeeOptions.some((o) => o.id === filterEmpId)) {
+      setFilterEmpId(null);
+    }
+  }, [employeeOptions, filterEmpId]);
+
+  const visibleSessions = useMemo(
+    () =>
+      filterEmpId == null
+        ? sessions
+        : sessions.filter((s) => s.employeeId === filterEmpId),
+    [sessions, filterEmpId]
+  );
+  const visibleTotals = useMemo(
+    () =>
+      filterEmpId == null ? totals : totals.filter((t) => t.employeeId === filterEmpId),
+    [totals, filterEmpId]
+  );
 
   async function addEmployee(e: React.FormEvent) {
     e.preventDefault();
@@ -502,32 +545,49 @@ export default function Dashboard() {
       </section>
 
       <section className="panel">
-        <div className="row" style={{ justifyContent: "space-between" }}>
+        <div
+          className="row"
+          style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}
+        >
           <h2 style={{ margin: 0 }}>Timesheet</h2>
-          <div className="field">
-            <label>Period</label>
-            <select
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
-              style={{
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                color: "var(--text)",
-                padding: "10px 12px",
-                fontSize: 15,
-              }}
-            >
-              <option value={1}>Today / last 24h</option>
-              <option value={7}>Last 7 days</option>
-              <option value={14}>Last 14 days</option>
-              <option value={30}>Last 30 days</option>
-            </select>
+          <div className="row" style={{ gap: 12 }}>
+            <div className="field">
+              <label>Employee</label>
+              <select
+                value={filterEmpId ?? ""}
+                onChange={(e) =>
+                  setFilterEmpId(e.target.value ? Number(e.target.value) : null)
+                }
+                style={selectStyle}
+              >
+                <option value="">All employees</option>
+                {employeeOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Period</label>
+              <select
+                value={days}
+                onChange={(e) => setDays(Number(e.target.value))}
+                style={selectStyle}
+              >
+                <option value={1}>Today / last 24h</option>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+                <option value={30}>Last 30 days</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <h3 style={{ marginTop: 20 }}>Total hours by employee</h3>
-        {totals.length === 0 ? (
+        <h3 style={{ marginTop: 20 }}>
+          {filterEmpId == null ? "Total hours by employee" : "Total hours"}
+        </h3>
+        {visibleTotals.length === 0 ? (
           <p className="muted">No completed sessions in this period.</p>
         ) : (
           <table>
@@ -542,7 +602,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {totals.map((t) => {
+              {visibleTotals.map((t) => {
                 const unpaidIds = unpaidInIdsFor(t.employeeId);
                 return (
                   <tr key={t.employeeId}>
@@ -577,7 +637,7 @@ export default function Dashboard() {
         )}
 
         <h3 style={{ marginTop: 24 }}>Sessions</h3>
-        {sessions.length === 0 ? (
+        {visibleSessions.length === 0 ? (
           <p className="muted">No punches in this period.</p>
         ) : (
           <table>
@@ -593,7 +653,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) =>
+              {visibleSessions.map((s) =>
                 editId === s.inId ? (
                   <tr key={s.inId}>
                     <td>{s.name}</td>

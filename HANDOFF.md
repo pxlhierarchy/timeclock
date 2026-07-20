@@ -1,6 +1,6 @@
 # Time Clock — Project Handoff
 
-_Last updated: 2026-06-29_
+_Last updated: 2026-07-20_
 
 An employee time-clock kiosk: staff tap their name and enter a 4-digit PIN to
 punch in/out; an admin area manages employees, corrects time, and views
@@ -154,6 +154,13 @@ form or the dashboard. The dashboard (one client component) provides:
   optional **note**) → inserts an in/out punch pair (`POST /api/admin/punches`).
   For forgotten punches.
 - **Timesheet** for the last 1 / 7 / 14 / 30 days, with:
+  - An **Employee filter** dropdown (next to the Period selector) that narrows
+    both the totals table and the sessions list to a single person — so you can
+    review one employee's paid + unpaid history at a glance. Defaults to "All
+    employees". Options are derived **client-side** from the sessions in the
+    current period (not the active-employee list), so a removed employee with
+    history in the window is still selectable; a selection that falls out of the
+    period resets to "All". No API change — the report already returns everyone.
   - **Total hours by employee** (session count + **unpaid / paid / total** hours,
     sorted by most unpaid first), with a **Mark N paid** button per employee that
     marks all their unpaid completed sessions in the period paid at once.
