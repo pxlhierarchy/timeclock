@@ -152,6 +152,8 @@ export default function Dashboard() {
   const [days, setDays] = useState(14);
   // Timesheet employee filter: null = show everyone, else a single employee id.
   const [filterEmpId, setFilterEmpId] = useState<number | null>(null);
+  // Sessions list ordering: "time" (newest first) or "name" (employee A–Z).
+  const [sortMode, setSortMode] = useState<"time" | "name">("time");
 
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
@@ -244,6 +246,17 @@ export default function Dashboard() {
       filterEmpId == null ? totals : totals.filter((t) => t.employeeId === filterEmpId),
     [totals, filterEmpId]
   );
+
+  // "time" keeps the report's newest-first order; "name" groups by employee
+  // (A–Z), still newest-first within each person.
+  const sortedSessions = useMemo(() => {
+    if (sortMode === "time") return visibleSessions;
+    return [...visibleSessions].sort(
+      (a, b) =>
+        a.name.localeCompare(b.name) ||
+        new Date(b.in).getTime() - new Date(a.in).getTime()
+    );
+  }, [visibleSessions, sortMode]);
 
   async function addEmployee(e: React.FormEvent) {
     e.preventDefault();
@@ -636,8 +649,32 @@ export default function Dashboard() {
           </table>
         )}
 
-        <h3 style={{ marginTop: 24 }}>Sessions</h3>
-        {visibleSessions.length === 0 ? (
+        <div
+          className="row"
+          style={{
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            flexWrap: "wrap",
+            gap: 12,
+            marginTop: 24,
+          }}
+        >
+          <h3 style={{ margin: 0 }}>Sessions</h3>
+          {sortedSessions.length > 0 && (
+            <div className="field">
+              <label>Sort by</label>
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as "time" | "name")}
+                style={selectStyle}
+              >
+                <option value="time">Newest first</option>
+                <option value="name">Employee name (A–Z)</option>
+              </select>
+            </div>
+          )}
+        </div>
+        {sortedSessions.length === 0 ? (
           <p className="muted">No punches in this period.</p>
         ) : (
           <table>
@@ -653,7 +690,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {visibleSessions.map((s) =>
+              {sortedSessions.map((s) =>
                 editId === s.inId ? (
                   <tr key={s.inId}>
                     <td>{s.name}</td>

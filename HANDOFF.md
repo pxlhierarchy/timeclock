@@ -161,6 +161,10 @@ form or the dashboard. The dashboard (one client component) provides:
     current period (not the active-employee list), so a removed employee with
     history in the window is still selectable; a selection that falls out of the
     period resets to "All". No API change — the report already returns everyone.
+  - A **Sort by** control on the Sessions list toggles between **Newest first**
+    (the report's default order) and **Employee name (A–Z)** (grouped by name,
+    still newest-first within each person). Client-side sort of the already-loaded
+    sessions; the filter and sort compose.
   - **Total hours by employee** (session count + **unpaid / paid / total** hours,
     sorted by most unpaid first), with a **Mark N paid** button per employee that
     marks all their unpaid completed sessions in the period paid at once.
